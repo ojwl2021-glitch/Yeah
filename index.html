@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>좌석 배치 및 실시간 예약 (3-5-3 배열)</title>
+    <style>
+        body {
+            font-family: 'Malgun Gothic', sans-serif;
+            background-color: #ffffff;
+            color: #333333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            gap: 40px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .flight-container {
+            background: #ffffff;
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid #e0e0e0;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            /* 3-5-3 배열(총 11석)이 다 들어가도록 너비를 대폭 넓힘 */
+            width: 650px; 
+        }
+        h2 {
+            color: #222222;
+            font-size: 1.4rem;
+            text-align: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #555555;
+            padding-bottom: 10px;
+        }
+        .airplane-body {
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 30px 30px 10px 10px;
+            border: 2px solid #cccccc;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .airplane-body::-webkit-scrollbar { width: 8px; }
+        .airplane-body::-webkit-scrollbar-thumb {
+            background-color: #bbbbbb;
+            border-radius: 4px;
+        }
+        .row {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+        .row-number {
+            width: 35px;
+            text-align: center;
+            font-weight: bold;
+            color: #666666;
+        }
+        .seat-group {
+            display: flex;
+            gap: 5px;
+        }
+        .aisle { width: 25px; } /* 복도 너비 */
+        
+        .seat {
+            width: 42px; 
+            height: 30px;
+            background-color: #eeeeee;
+            color: #333333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-radius: 5px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: 0.2s;
+            border: 1px solid #aaaaaa;
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+        .seat:hover { background-color: #cccccc; }
+        .seat.selected {
+            background-color: #222222;
+            color: #ffffff;
+            border-color: #000000;
+            font-weight: bold;
+        }
+        
+        /* 40, 41열 등 빈 공간을 표시하기 위한 스타일 */
+        .spacer-row {
+            height: 30px;
+            margin: 15px 0;
+            background-color: #eaeaea;
+            border-radius: 5px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #888888;
+            font-size: 0.85rem;
+            border: 1px dashed #cccccc;
+        }
+
+        .result-box {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #fdfdfd;
+            border: 1px solid #cccccc;
+            border-radius: 8px;
+            min-height: 60px;
+        }
+        .result-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+            font-size: 0.95rem;
+            color: #444;
+        }
+        .passenger-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            font-size: 0.9rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .passenger-item {
+            background-color: #eeeeee;
+            padding: 5px 10px;
+            border-radius: 15px;
+            border: 1px solid #cccccc;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 가는편 -->
+    <div class="flight-container">
+        <h2>🛫 가는편</h2>
+        <div class="airplane-body" id="outbound-seat-map"></div>
+        <div class="result-box">
+            <div class="result-title">탑승자 명단 (가는편)</div>
+            <ul class="passenger-list" id="outbound-list"></ul>
+        </div>
+    </div>
+
+    <!-- 오는편 -->
+    <div class="flight-container">
+        <h2>🛬 오는편</h2>
+        <div class="airplane-body" id="inbound-seat-map"></div>
+        <div class="result-box">
+            <div class="result-title">탑승자 명단 (오는편)</div>
+            <ul class="passenger-list" id="inbound-list"></ul>
+        </div>
+    </div>
+
+    <!-- Firebase v10 모듈 스크립트 -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+        import { getFirestore, doc, setDoc, updateDoc, deleteField, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+
+        // 사용자의 Firebase 설정값
+        const firebaseConfig = {
+            apiKey: "AIzaSyD-DnZx2OKE83XVHTwfWvM-eNK-gCjkxZk",
+            authDomain: "the-american-dream-e7137.firebaseapp.com",
+            projectId: "the-american-dream-e7137",
+            storageBucket: "the-american-dream-e7137.firebasestorage.app",
+            messagingSenderId: "133403559382",
+            appId: "1:133403559382:web:3354a680e927770156d077",
+            measurementId: "G-C0MCJHLL6P"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // 🚨 3-5-3 배열로 변경 (알파벳 I는 항공기 좌석에서 혼동 방지용으로 빼는 것이 원칙이므로 J, K, L 사용)
+        const seatLetters = [['A', 'B', 'C'], ['D', 'E', 'F', 'G', 'H'], ['J', 'K', 'L']];
+        const startRow = 28;
+        const endRow = 53;
+
+        const seatDOMs = { outbound: {}, inbound: {} };
+
+        // 1. 좌석 UI 렌더링 함수
+        function renderSeats(containerId, flightType) {
+            const container = document.getElementById(containerId);
+
+            for (let row = startRow; row <= endRow; row++) {
+                
+                // 🚨 40열과 41열은 좌석을 띄우고(건너뛰고) 빈 공간(Spacer) 삽입
+                if (row === 40 || row === 41) {
+                    const spacerDiv = document.createElement('div');
+                    spacerDiv.className = 'spacer-row';
+                    spacerDiv.innerText = `[ ${row}열 비상구 / 갤리 공간 ]`;
+                    container.appendChild(spacerDiv);
+                    continue; // 아래 좌석 생성 코드를 실행하지 않고 다음 열로 넘어감
+                }
+
+                const rowDiv = document.createElement('div');
+                rowDiv.className = 'row';
+
+                const rowNum = document.createElement('div');
+                rowNum.className = 'row-number';
+                rowNum.innerText = row;
+                rowDiv.appendChild(rowNum);
+
+                seatLetters.forEach((group, index) => {
+                    const groupDiv = document.createElement('div');
+                    groupDiv.className = 'seat-group';
+
+                    group.forEach(letter => {
+                        const seat = document.createElement('div');
+                        seat.className = 'seat';
+                        seat.innerText = letter;
+                        seat.dataset.letter = letter; 
+                        
+                        const seatNumber = row + letter;
+                        
+                        seatDOMs[flightType][seatNumber] = seat;
+
+                        seat.addEventListener('click', async function() {
+                            const docRef = doc(db, 'flights', flightType); 
+
+                            if (this.classList.contains('selected')) {
+                                if (confirm(`[${seatNumber}] 좌석 배정을 취소하시겠습니까?`)) {
+                                    await updateDoc(docRef, { [seatNumber]: deleteField() }).catch(e => console.log(e));
+                                }
+                            } else {
+                                const passengerName = prompt(`${seatNumber} 좌석에 탑승할 분의 이름을 입력하세요:`);
+                                if (passengerName && passengerName.trim() !== "") {
+                                    await setDoc(docRef, { [seatNumber]: passengerName.trim() }, { merge: true });
+                                }
+                            }
+                        });
+
+                        groupDiv.appendChild(seat);
+                    });
+                    rowDiv.appendChild(groupDiv);
+
+                    // 복도(Aisle) 추가
+                    if (index < seatLetters.length - 1) {
+                        const aisle = document.createElement('div');
+                        aisle.className = 'aisle';
+                        rowDiv.appendChild(aisle);
+                    }
+                });
+                container.appendChild(rowDiv);
+            }
+        }
+
+        // 2. Firebase 실시간 데이터 동기화 함수
+        function syncFirebaseData(flightType, listId) {
+            const docRef = doc(db, 'flights', flightType);
+            const listContainer = document.getElementById(listId);
+
+            onSnapshot(docRef, (snapshot) => {
+                const data = snapshot.exists() ? snapshot.data() : {};
+                listContainer.innerHTML = '';
+
+                Object.values(seatDOMs[flightType]).forEach(seat => {
+                    seat.classList.remove('selected');
+                    seat.innerText = seat.dataset.letter;
+                });
+
+                Object.keys(data).sort().forEach(seatNum => {
+                    const name = data[seatNum];
+                    const seatDiv = seatDOMs[flightType][seatNum];
+                    
+                    if (seatDiv) {
+                        seatDiv.classList.add('selected');
+                        seatDiv.innerText = name;
+                    }
+
+                    const li = document.createElement('li');
+                    li.className = 'passenger-item';
+                    li.innerText = `${seatNum} : ${name}`;
+                    listContainer.appendChild(li);
+                });
+            });
+        }
+
+        renderSeats('outbound-seat-map', 'outbound');
+        renderSeats('inbound-seat-map', 'inbound');
+
+        syncFirebaseData('outbound', 'outbound-list');
+        syncFirebaseData('inbound', 'inbound-list');
+    </script>
+</body>
+</html>
